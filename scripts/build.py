@@ -1645,18 +1645,47 @@ def build_board(
             ([option.split("=", 1)[0]], "--language")
         )
         wake_word_supported = _board_supports_wake_word(target, sdkconfig_append)
+        append_assignments = _sdkconfig_assignments(sdkconfig_append)
+        custom_wake_from_board = append_assignments.get("CONFIG_USE_CUSTOM_WAKE_WORD") == "y"
         requested_wake_word = wake_word
-        if requested_wake_word is None:
-            requested_wake_word = "disabled"
-            if wake_word_supported:
-                requested_wake_word = (
-                    "nihaoxiaozhi" if selected_language in {"zh-CN", "zh-TW"} else "hiesp"
+        if requested_wake_word is None and custom_wake_from_board:
+            # Keep a MultiNet custom phrase supplied by the board config instead
+            # of replacing it with a preset WakeNet model.
+            phrase = append_assignments.get("CONFIG_CUSTOM_WAKE_WORD", "custom")
+            if len(phrase) >= 2 and phrase[0] == phrase[-1] and phrase[0] in {'"', "'"}:
+                phrase = phrase[1:-1]
+            selected_wake_word = f"custom:{phrase}"
+            wake_word_options = [
+                "CONFIG_WAKE_WORD_DISABLED=n",
+                "CONFIG_USE_ESP_WAKE_WORD=n",
+                "CONFIG_USE_AFE_WAKE_WORD=n",
+                "CONFIG_USE_CUSTOM_WAKE_WORD=y",
+            ]
+            wake_word_symbols = ["CONFIG_USE_CUSTOM_WAKE_WORD"]
+            mn_symbols = [
+                key for key, value in append_assignments.items()
+                if key.startswith("CONFIG_SR_MN_CN_")
+                and key != "CONFIG_SR_MN_CN_NONE"
+                and value == "y"
+            ]
+            if not mn_symbols:
+                raise ValueError(
+                    "CONFIG_USE_CUSTOM_WAKE_WORD=y requires a Chinese MultiNet "
+                    "model such as CONFIG_SR_MN_CN_MULTINET7_QUANT=y"
                 )
-        (
-            selected_wake_word,
-            wake_word_options,
-            wake_word_symbols,
-        ) = _wake_word_sdkconfig_options(requested_wake_word, target)
+            wake_word_symbols.extend(mn_symbols)
+        else:
+            if requested_wake_word is None:
+                requested_wake_word = "disabled"
+                if wake_word_supported:
+                    requested_wake_word = (
+                        "nihaoxiaozhi" if selected_language in {"zh-CN", "zh-TW"} else "hiesp"
+                    )
+            (
+                selected_wake_word,
+                wake_word_options,
+                wake_word_symbols,
+            ) = _wake_word_sdkconfig_options(requested_wake_word, target)
         if selected_wake_word != "disabled" and not wake_word_supported:
             raise ValueError(
                 f"Wake-word detection is disabled or unsupported for {final_name!r}; "
